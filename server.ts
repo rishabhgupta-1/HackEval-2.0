@@ -8,6 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const db = new Database("hackathon.db");
+db.pragma('journal_mode = WAL');
 
 // Initialize database
 db.exec(`
@@ -235,6 +236,44 @@ if (teamCount.count === 0) {
     }
   });
 
+  // Round 2 Evaluations by Rishabh
+  const r2Id = db.prepare("SELECT id FROM rounds WHERE sequence = 2").get() as { id: number };
+  const r2Params = db.prepare("SELECT id FROM parameters WHERE round_id = ? ORDER BY id").all(r2Id.id) as { id: number }[];
+
+  const r2DataRishabh = [
+    { team: "Team Invictus", scores: [10, 4, 9, 1], total: 24 },
+    { team: "Tech Vengers", scores: [8, 4, 7, 5], total: 24 },
+    { team: "Team Triverse", scores: [6, 3, 7, 2], total: 18 },
+    { team: "Mind Spark", scores: [7, 2, 7, 2], total: 18 },
+    { team: "Team Titans", scores: [8, 2, 7, 1], total: 18 },
+    { team: "Code101", scores: [7, 2, 6, 2], total: 17 },
+    { team: "D3CODE", scores: [7, 3, 2, 2], total: 14 },
+    { team: "Central C", scores: [7, 1, 4, 2], total: 14 },
+    { team: "CodeQuad", scores: [6, 1, 4, 1], total: 12 },
+    { team: "Code Catalyst", scores: [4, 1, 4, 1], total: 10 },
+    { team: "TriNova Coders", scores: [5, 1, 2, 2], total: 10 },
+    { team: "Alpha developer", scores: [3, 1, 4, 1], total: 9 },
+    { team: "4chan", scores: [2, 1, 2, 1], total: 6 },
+    { team: "Code Wave", scores: [1, 1, 1, 1], total: 4 }
+  ];
+
+  r2DataRishabh.forEach(data => {
+    const team = db.prepare("SELECT id, problem_statement_id FROM teams WHERE name = ?").get(data.team) as { id: number, problem_statement_id: number };
+    if (team) {
+      // Check if evaluation already exists to avoid duplicates on restart
+      const existing = db.prepare("SELECT id FROM evaluations WHERE team_id = ? AND round_id = ? AND evaluator_id = ?").get(team.id, r2Id.id, rishabh.id);
+      if (!existing) {
+        const scoreMap: Record<number, number> = {};
+        data.scores.forEach((s, idx) => {
+          if (r2Params[idx]) {
+            scoreMap[r2Params[idx].id] = s;
+          }
+        });
+        insertEval.run(team.id, r2Id.id, rishabh.id, team.problem_statement_id, JSON.stringify(scoreMap), "Round 2 evaluation", data.total);
+      }
+    }
+  });
+
   // Round 1 Evaluations by Srijan
   const srijan = db.prepare("SELECT id FROM evaluators WHERE name = ?").get("Srijan") as { id: number };
   const srijanData = [
@@ -281,6 +320,118 @@ if (teamCount.count === 0) {
     }
   });
 }
+
+// Ensure Round 2 data for Rishabh exists (Migration/Fix)
+function seedRound2Data() {
+  try {
+    const rishabh = db.prepare("SELECT id FROM evaluators WHERE name = ?").get("Rishabh") as { id: number } | undefined;
+    const r2 = db.prepare("SELECT id FROM rounds WHERE sequence = 2").get() as { id: number } | undefined;
+    
+    if (!rishabh || !r2) {
+      console.log("Skipping Round 2 seed: Evaluator or Round not found");
+      return;
+    }
+
+    const r2Params = db.prepare("SELECT id FROM parameters WHERE round_id = ? ORDER BY id").all(r2.id) as { id: number }[];
+    
+    const r2DataRishabh = [
+      { team: "Team Invictus", scores: [10, 4, 9, 1], total: 24 },
+      { team: "Tech Vengers", scores: [8, 4, 7, 5], total: 24 },
+      { team: "Team Triverse", scores: [6, 3, 7, 2], total: 18 },
+      { team: "Mind Spark", scores: [7, 2, 7, 2], total: 18 },
+      { team: "Team Titans", scores: [8, 2, 7, 1], total: 18 },
+      { team: "Code101", scores: [7, 2, 6, 2], total: 17 },
+      { team: "D3CODE", scores: [7, 3, 2, 2], total: 14 },
+      { team: "Central C", scores: [7, 1, 4, 2], total: 14 },
+      { team: "CodeQuad", scores: [6, 1, 4, 1], total: 12 },
+      { team: "Code Catalyst", scores: [4, 1, 4, 1], total: 10 },
+      { team: "TriNova Coders", scores: [5, 1, 2, 2], total: 10 },
+      { team: "Alpha developer", scores: [3, 1, 4, 1], total: 9 },
+      { team: "4chan", scores: [2, 1, 2, 1], total: 6 },
+      { team: "Code Wave", scores: [1, 1, 1, 1], total: 4 }
+    ];
+
+    const insertEval = db.prepare(`
+      INSERT INTO evaluations (team_id, round_id, evaluator_id, problem_statement_id, scores, feedback, total_score)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    let addedCount = 0;
+    r2DataRishabh.forEach(data => {
+      const team = db.prepare("SELECT id, problem_statement_id FROM teams WHERE name = ?").get(data.team) as { id: number, problem_statement_id: number };
+      if (team) {
+        // Check if evaluation already exists
+        const existing = db.prepare("SELECT id FROM evaluations WHERE team_id = ? AND round_id = ? AND evaluator_id = ?").get(team.id, r2.id, rishabh.id);
+        if (!existing) {
+          const scoreMap: Record<number, number> = {};
+          data.scores.forEach((s, idx) => {
+            if (r2Params[idx]) {
+              scoreMap[r2Params[idx].id] = s;
+            }
+          });
+          insertEval.run(team.id, r2.id, rishabh.id, team.problem_statement_id, JSON.stringify(scoreMap), "Round 2 evaluation (Restored)", data.total);
+          addedCount++;
+        }
+      }
+    });
+    
+    if (addedCount > 0) {
+      console.log(`Restored ${addedCount} Round 2 evaluations for Rishabh.`);
+    }
+
+    // Srijan Round 2 Data
+    const srijan = db.prepare("SELECT id FROM evaluators WHERE name = ?").get("Srijan") as { id: number } | undefined;
+    if (!srijan) {
+      console.log("Skipping Round 2 seed for Srijan: Evaluator not found");
+      return;
+    }
+
+    const r2DataSrijan = [
+      { team: "Central C", scores: [10, 4, 8, 5], total: 27 },
+      { team: "Tech Vengers", scores: [10, 5, 6, 5], total: 26 },
+      { team: "Team Invictus", scores: [10, 4, 8, 3], total: 25 },
+      { team: "Team Titans", scores: [8, 2, 10, 3], total: 23 },
+      { team: "Code101", scores: [7, 3, 7, 3], total: 20 },
+      { team: "Team Triverse", scores: [7, 3, 6, 1], total: 17 },
+      { team: "Mind Spark", scores: [5, 2, 7, 2], total: 16 },
+      { team: "TriNova Coders", scores: [6, 2, 6, 1], total: 15 },
+      { team: "CodeQuad", scores: [6, 2, 5, 1], total: 14 },
+      { team: "D3CODE", scores: [6, 3, 2, 2], total: 13 },
+      { team: "Code Catalyst", scores: [4, 1, 3, 1], total: 9 },
+      { team: "4chan", scores: [3, 1, 4, 1], total: 9 },
+      { team: "Alpha developer", scores: [1, 1, 1, 1], total: 4 },
+      { team: "Code Wave", scores: [1, 1, 1, 1], total: 4 }
+    ];
+
+    let addedCountSrijan = 0;
+    r2DataSrijan.forEach(data => {
+      const team = db.prepare("SELECT id, problem_statement_id FROM teams WHERE name = ?").get(data.team) as { id: number, problem_statement_id: number };
+      if (team) {
+        // Check if evaluation already exists
+        const existing = db.prepare("SELECT id FROM evaluations WHERE team_id = ? AND round_id = ? AND evaluator_id = ?").get(team.id, r2.id, srijan.id);
+        if (!existing) {
+          const scoreMap: Record<number, number> = {};
+          data.scores.forEach((s, idx) => {
+            if (r2Params[idx]) {
+              scoreMap[r2Params[idx].id] = s;
+            }
+          });
+          insertEval.run(team.id, r2.id, srijan.id, team.problem_statement_id, JSON.stringify(scoreMap), "Round 2 evaluation (Restored)", data.total);
+          addedCountSrijan++;
+        }
+      }
+    });
+
+    if (addedCountSrijan > 0) {
+      console.log(`Restored ${addedCountSrijan} Round 2 evaluations for Srijan.`);
+    }
+
+  } catch (error) {
+    console.error("Error seeding Round 2 data:", error);
+  }
+}
+
+seedRound2Data();
 
 async function startServer() {
   const app = express();
